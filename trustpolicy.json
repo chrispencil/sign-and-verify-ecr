@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "trustPolicies": [
+    {
+      "name": "AWSSignerTrust",
+      "registryScopes": [ 
+        "*"
+      ],
+      "signatureVerification": {
+        "level": "strict"
+      },
+      "trustStores":[
+        "signingAuthority:aws-signer-ts"
+      ],
+      "trustedIdentities": [
+        "arn:aws:signer:eu-west-1:{security-accountid}:/signing-profiles/approvedbasesign"
+      ]
+    }
+  ]
+}
