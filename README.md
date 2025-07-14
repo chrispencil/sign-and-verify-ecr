@@ -1,4 +1,4 @@
-# 🛡️***Signing and Verifying AWS Central ECR Images with AWS Signer ***
+# 🛡️Signing and Verifying AWS Central ECR Images with AWS Signer
 ![arch-diagram](centralecr.png "Central ECR, AWS Signer")
 
 This is an extremely basic setup, using a central ECR with a pull through cache from upstream Dockerhub. 
