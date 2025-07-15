@@ -1,0 +1,87 @@
+name: Mirror and Sign Base Images
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-west-1
+  AWS_ACCOUNT_ID: {security-accountid}
+  SIGNING_PROFILE: approvedbasesign
+
+jobs:
+  mirror-sign:
+    name: Mirror Public Base Images and Sign
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials (Security Account)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::{security-accountid}:role/centralecrsec
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Install AWS Signer Notation Plugin
+        run: |
+          wget https://d2hvyiie56hcat.cloudfront.net/linux/amd64/installer/deb/latest/aws-signer-notation-cli_amd64.deb
+          sudo dpkg -i aws-signer-notation-cli_amd64.deb
+        shell: bash 
+
+      - name: Setup Notation CLI
+        uses: notaryproject/notation-action/setup@v1
+        with:
+          version: 1.1.0
+
+      - name: Mirror, Push, and Sign Base Images
+        run: |
+          BASE_IMAGES=( \
+            "library/alpine:3.18" \
+            "library/ubuntu:22.04" \
+            "library/node:20" \
+          )
+
+          for image in "${BASE_IMAGES[@]}"; do
+            NAME=${image%%:*}
+            TAG=${image##*:}
+            BASENAME=$(basename $NAME)
+
+            PTC_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/dockerhub/${image}"
+            SIGNED_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/signed-base-images/${BASENAME}:${TAG}"
+
+            echo "Pulling from Pull-Through Cache: $PTC_IMAGE"
+            docker pull "$PTC_IMAGE"
+
+            #PTC is read only, you cannot write or sign it, only pull.
+
+            echo "Retagging to: $SIGNED_IMAGE"
+            docker tag "$PTC_IMAGE" "$SIGNED_IMAGE"
+
+            echo "Pushing to signed repo..."
+            docker push "$SIGNED_IMAGE"
+
+            echo "Getting SHA digest from signed repo..."
+            PUSHED_DIGEST=$(docker inspect --format='{{join .RepoDigests "\n"}}' "$SIGNED_IMAGE" | grep "signed-base-images")
+
+            echo "Pushed digest: $PUSHED_DIGEST"
+
+            echo "Signing image with Notation..."
+            notation sign "$PUSHED_DIGEST" \
+              --plugin "com.amazonaws.signer.notation.plugin" \
+              --id "arn:aws:signer:${AWS_REGION}:${AWS_ACCOUNT_ID}:/signing-profiles/${SIGNING_PROFILE}"
+
+            echo "Importing trust policy..."
+            notation policy import trustpolicy.json --force
+
+            echo "Verifying signature..."
+            notation verify "$PUSHED_DIGEST"
+          done         

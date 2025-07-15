@@ -1,0 +1,80 @@
+name: Pull, Verify and Push Signed Base Images
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-west-1
+  CENTRAL_ACCOUNT_ID: {security-accountid}
+  APP1_ACCOUNT_ID: {application-accountid}
+  SIGNING_PROFILE: approvedimagesign
+
+jobs:
+  pull-verify-extend-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials for app1
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::{security-accountid}:role/centralecr
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR (both accounts)
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin $CENTRAL_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin $APP1_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      - name: Install AWS Signer Notation Plugin
+        run: |
+          wget https://d2hvyiie56hcat.cloudfront.net/linux/amd64/installer/deb/latest/aws-signer-notation-cli_amd64.deb
+          sudo dpkg -i aws-signer-notation-cli_amd64.deb
+
+      - name: Setup Notation CLI
+        uses: notaryproject/notation-action/setup@v1
+        with:
+          version: 1.1.0
+
+      - name: Pull, Verify, Extend, and Push
+        run: |
+          set -euo pipefail #ensures pipeline failure on error
+
+          BASE_IMAGES=( "ubuntu:22.04" )
+              
+          for image in "${BASE_IMAGES[@]}"; do
+            NAME=${image%%:*}
+            TAG=${image##*:}
+          
+            FULL_SIGNED="$CENTRAL_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/signed-base-images/$NAME:$TAG"
+            FULL_DEST="$APP1_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/app1-repo/$NAME:$TAG"
+          
+            echo "Pulling signed image: $FULL_SIGNED"
+            docker pull $FULL_SIGNED
+          
+            echo "Getting SHA digest..."
+            IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $FULL_SIGNED)
+
+            echo "Importing trust policy..."
+            notation policy import trustpolicy.json --force
+          
+            echo "Verifying signature..."
+            notation verify $IMAGE_DIGEST
+          
+            echo "Adding dummy layer..."
+            CONTAINER_ID=$(docker create $FULL_SIGNED)
+            docker commit $CONTAINER_ID $FULL_DEST
+            docker rm $CONTAINER_ID
+          
+            echo "Pushing image to App1 ECR: $FULL_DEST"
+            docker push $FULL_DEST
+          done
+

@@ -1,0 +1,54 @@
+name: Deploy ECR Infra
+
+on:
+  push:
+    paths:
+      - 'security-account/**'
+      - 'app-account/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-security:
+    name: Deploy Security Account Infra
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.1
+
+      - name: Configure AWS credentials (Security Account)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::{security-accountid}:role/centralecrsec
+          aws-region: eu-west-1
+
+      - run: terraform -chdir=security-account init
+      - run: terraform -chdir=security-account apply -auto-approve
+
+  deploy-app:
+    name: Deploy App Account Infra
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.1
+
+      - name: Configure AWS credentials (App Account)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::{application-accountid}:role/centralecr
+          aws-region: eu-west-1
+
+      - run: terraform -chdir=app-account init
+      - run: terraform -chdir=app-account apply -auto-approve
