@@ -24,7 +24,6 @@ resource "aws_ecr_repository_policy" "signed_base_images_policy" {
         Action = [
           "ecr:BatchGetImage",
           "ecr:DescribeImages",
-          "ecr:CreateRepository",
           "ecr:DescribeRepositories",
           "ecr:GetDownloadUrlForLayer"
         ]
